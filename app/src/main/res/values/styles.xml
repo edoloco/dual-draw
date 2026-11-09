@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Tema" parent="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+        <item name="android:windowBackground">@color/trabajo</item>
+        <item name="android:colorAccent">#2FA866</item>
+        <item name="android:colorPrimary">#F57C1F</item>
+    </style>
+    <color name="trabajo">#5F6369</color>
+    <color name="icono_fondo">#2A313B</color>
+</resources>
