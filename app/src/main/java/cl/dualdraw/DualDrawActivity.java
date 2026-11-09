@@ -2231,7 +2231,14 @@ public class DualDrawActivity extends Activity implements Link.Listener {
             if (edit && offShow) drawOffCursor(c);
             if (edit) {   // tamaño del dibujo y versión, abajo a la izquierda
                 if (info == null) { info = new Paint(Paint.ANTI_ALIAS_FLAG); info.setColor(0xCCFFFFFF); info.setTextSize(11 * dp); info.setShadowLayer(2 * dp, 0, dp / 2, 0x99000000); }
-                c.drawText(doc.W + " × " + doc.H + " px · " + Updater.installed(getContext()), 8 * dp, getHeight() - 8 * dp, info);
+                // con el zoom (× "ver todo") para saber cuánto se acercó, y un aviso si un toque se tomó por la palma
+                float zx = zoom / Math.max(1e-4f, fitZoom());
+                String zs = zx >= 10 ? Math.round(zx) + "×" : String.format(java.util.Locale.ROOT, "%.1f×", zx);
+                c.drawText(doc.W + " × " + doc.H + " px · zoom " + zs + " · " + Updater.installed(getContext()), 8 * dp, getHeight() - 8 * dp, info);
+                if (System.currentTimeMillis() - palmAt < 1500) {
+                    c.drawText("✋ toque ancho ignorado (palma)", 8 * dp, getHeight() - 24 * dp, info);
+                    postInvalidateDelayed(1600);
+                }
             }
         }
 
@@ -2687,6 +2694,9 @@ public class DualDrawActivity extends Activity implements Link.Listener {
 
         // ---- texto: tocar un texto lo edita; arrastrarlo lo mueve; tocar en otro lado crea uno nuevo (en su propia capa)
         private boolean palm, ignored2;
+        private float touchAvg;
+        private int touchN;
+        private long palmAt;
         private int drawId;
         private long downAt;
         private DrawDoc.VShape tDrag;
@@ -3038,8 +3048,14 @@ public class DualDrawActivity extends Activity implements Link.Listener {
             if (tool == T_TEXT && textTouch(e)) return true;
             // la palma o el canto de la mano (toque muy ancho) no dibuja: suele ser el origen de toques "fantasma"
             // (30 mm: con 20 mm algunos lápices de disco y dedos apoyados se tomaban por palma y no dibujaban)
-            if (e.getActionMasked() == MotionEvent.ACTION_DOWN && e.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER
-                    && e.getTouchMajor() > 30f / 25.4f * getResources().getDisplayMetrics().xdpi) { palm = true; return true; }
+            // Algunas pantallas (Poco) informan el ancho del toque en otra escala: con un límite fijo, la mitad de los
+            // toques normales se tomaban por palma y no dibujaban (ni dejaban hacer zoom). Ahora se compara con el
+            // toque típico de esta pantalla: palma = más de 2,5 veces el ancho habitual (y al menos 25 mm).
+            if (e.getActionMasked() == MotionEvent.ACTION_DOWN && e.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER) {
+                float tm = e.getTouchMajor(), mm25 = 25f / 25.4f * getResources().getDisplayMetrics().xdpi;
+                if (touchN >= 8 && tm > Math.max(mm25, touchAvg * 2.5f)) { palm = true; palmAt = System.currentTimeMillis(); invalidate(); return true; }
+                if (tm > 0) { touchAvg = touchN == 0 ? tm : touchAvg * 0.9f + tm * 0.1f; touchN++; }
+            }
             if (palm) { if (e.getActionMasked() == MotionEvent.ACTION_UP || e.getActionMasked() == MotionEvent.ACTION_CANCEL) palm = false; return true; }
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN: {
