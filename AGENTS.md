@@ -50,3 +50,12 @@ Si la app se cae, `catchCrashes` guarda `files/error.txt` y al abrirla de nuevo 
 - Al conectarse o volver al frente: `dwOpen` (que la otra mitad se abra) + `dwFull`/`dwHello`.
 - `dwClose` cierra la otra mitad. `dwPick`: importar imagen se elige en el principal.
 - ChronOS la abre en el extendido sola al abrirla en el principal (meta-data `chronos.dual`).
+
+## Trazo y zoom (extendido)
+
+- Zoom: de 1/4 de "ver todo" hasta 40 veces (o 16 px de pantalla por píxel del dibujo), en `Board.clamp`.
+- Dedo que dibuja = `drawId`: un segundo dedo que llega > 220 ms después de empezar es la mano apoyada y se
+  ignora (`ignored2`); el trazo sigue. Dos dedos casi a la vez = zoom (el trazo empezado se deshace).
+- Palma: toque de dedo > 30 mm. Toque fantasma: < 45 ms sin moverse no deja punto. Colita final: `finishTail`.
+- Presión con dedo (`pressureAt`, cada punto del historial con su propia presión): mezcla velocidad y área de
+  contacto, nunca baja de 0,35 (antes llegaba a 0 y el trazo se cortaba). Con lápiz activo, la presión real.

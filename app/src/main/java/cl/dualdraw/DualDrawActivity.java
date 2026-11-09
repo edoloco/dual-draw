@@ -2153,7 +2153,8 @@ public class DualDrawActivity extends Activity implements Link.Listener {
 
         private void clamp() {
             float fz = fitZoom();
-            zoom = Math.max(fz * 0.25f, Math.min(fz * 12, zoom));   // se puede alejar más que "ver todo"
+            // acercar mucho para detalles: hasta 40 veces "ver todo" (o 16 px de pantalla por píxel del dibujo)
+            zoom = Math.max(fz * 0.25f, Math.min(Math.max(fz * 40, 16f), zoom));   // se puede alejar más que "ver todo"
             float vw = getWidth() / zoom, vh = getHeight() / zoom;
             ox = vw >= doc.W ? -(vw - doc.W) / 2f : Math.max(0, Math.min(doc.W - vw, ox));
             oy = vh >= doc.H ? -(vh - doc.H) / 2f : Math.max(0, Math.min(doc.H - vh, oy));
@@ -2311,22 +2312,29 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         private float toY(float sy) { return sy / zoom + oy; }
 
         /** Presión: la del dedo si el teléfono la entrega de verdad; si no, sale de la velocidad (lento = más grueso). */
-        private float pressure(MotionEvent e, float x, float y, long t) {
+        private float pressure(MotionEvent e, float x, float y, long t) { return pressureAt(e, 0, -1, x, y, t); }
+
+        /** Presión del punto (hi = punto del historial, -1 = el actual) del dedo pi. */
+        private float pressureAt(MotionEvent e, int pi, int hi, float x, float y, long t) {
             if (brush == DrawDoc.VALUE) return Math.max(0.03f, valueLevel);   // el grosor lo pone la barra, en vivo
-            float raw = e.getPressure(0);
-            if (e.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS || e.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER) {
+            float raw = hi >= 0 ? e.getHistoricalPressure(pi, hi) : e.getPressure(pi);
+            int tt = e.getToolType(pi);
+            if (tt == MotionEvent.TOOL_TYPE_STYLUS || tt == MotionEvent.TOOL_TYPE_ERASER) {
                 // lápiz (tableta o pantalla con lápiz): su presión es de verdad, se usa tal cual (suavizada)
                 ps = ps * 0.5f + Math.max(0.02f, Math.min(1f, raw)) * 0.5f;
                 return ps;
             }
+            // dedo: la "presión" de la pantalla es el área de contacto y salta mucho; antes podía llegar a 0 y el
+            // trazo quedaba cortado (se sentía como si el toque fallara). Ahora nunca baja de 0,35 y cambia suave.
             pMin = Math.min(pMin, raw); pMax = Math.max(pMax, raw);
-            float p;
-            if (pMax - pMin > 0.12f) p = Math.max(0f, Math.min(1f, (raw - pMin) / Math.max(0.05f, pMax - pMin)));
-            else {
-                float dt = Math.max(1, t - lastT), v = (float) Math.hypot(x - lastX, y - lastY) / dt / dp;
-                p = Math.max(0.2f, Math.min(1f, 1.05f - v * 0.45f));
+            float dt = Math.max(1, t - lastT), v = (float) Math.hypot(x - lastX, y - lastY) / dt / dp;
+            float pv = Math.max(0.35f, Math.min(1f, 1.05f - v * 0.35f));   // más rápido = un poco más fino
+            float p = pv;
+            if (pMax - pMin > 0.12f) {
+                float pa = Math.max(0f, Math.min(1f, (raw - pMin) / Math.max(0.05f, pMax - pMin)));
+                p = Math.max(0.35f, pv * 0.6f + pa * 0.4f);
             }
-            ps = ps * 0.75f + p * 0.25f;
+            ps = ps * 0.85f + p * 0.15f;
             return ps;
         }
 
@@ -2678,7 +2686,9 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         }
 
         // ---- texto: tocar un texto lo edita; arrastrarlo lo mueve; tocar en otro lado crea uno nuevo (en su propia capa)
-        private boolean palm;
+        private boolean palm, ignored2;
+        private int drawId;
+        private long downAt;
         private DrawDoc.VShape tDrag;
         private int tL = -1, tI = -1;
         private float tdx, tdy, tsx, tsy;
@@ -3027,13 +3037,16 @@ public class DualDrawActivity extends Activity implements Link.Listener {
             if (tool == T_PEN && (penOff ? penTouchOff(e) : penTouch(e))) return true;
             if (tool == T_TEXT && textTouch(e)) return true;
             // la palma o el canto de la mano (toque muy ancho) no dibuja: suele ser el origen de toques "fantasma"
+            // (30 mm: con 20 mm algunos lápices de disco y dedos apoyados se tomaban por palma y no dibujaban)
             if (e.getActionMasked() == MotionEvent.ACTION_DOWN && e.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER
-                    && e.getTouchMajor() > 20f / 25.4f * getResources().getDisplayMetrics().xdpi) { palm = true; return true; }
+                    && e.getTouchMajor() > 30f / 25.4f * getResources().getDisplayMetrics().xdpi) { palm = true; return true; }
             if (palm) { if (e.getActionMasked() == MotionEvent.ACTION_UP || e.getActionMasked() == MotionEvent.ACTION_CANCEL) palm = false; return true; }
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN: {
                     two = false;
                     float x = toX(e.getX()), y = toY(e.getY());
+                    drawId = e.getPointerId(0);
+                    downAt = e.getEventTime();
                     if (tool == T_DRAW) {
                         lastX = e.getX(); lastY = e.getY(); lastT = e.getEventTime(); ps = 0.6f;
                         armed = true;
@@ -3050,6 +3063,10 @@ public class DualDrawActivity extends Activity implements Link.Listener {
                     return true;
                 }
                 case MotionEvent.ACTION_POINTER_DOWN:
+                    // un segundo dedo cuando el trazo ya va avanzado es la mano que se apoya: se ignora y el trazo
+                    // sigue (antes lo borraba: se sentía como si el toque fallara). Dos dedos casi juntos = zoom.
+                    if (e.getPointerCount() == 2 && (drawing || armed) && e.getEventTime() - downAt > 220) { ignored2 = true; return true; }
+                    if (ignored2) return true;
                     if (e.getPointerCount() == 2) {
                         cancelStroke();
                         shaping = false;
@@ -3079,27 +3096,38 @@ public class DualDrawActivity extends Activity implements Link.Listener {
                         if (Math.hypot(lx - lasso.get(lasso.size() - 2), ly - lasso.get(lasso.size() - 1)) * zoom > 3 * dp) { lasso.add(lx); lasso.add(ly); invalidate(); }
                         return true;
                     }
+                    int pi = Math.max(0, e.findPointerIndex(drawId));   // solo el dedo que dibuja (no la mano apoyada)
                     if (armed) {   // empieza el trazo apenas el dedo se mueve un poco (o a los 45 ms)
-                        if (Math.hypot(e.getX() - aX, e.getY() - aY) > 3 * dp || e.getEventTime() - aT >= 45) { removeCallbacks(armTimeout); startStroke(); }
+                        if (Math.hypot(e.getX(pi) - aX, e.getY(pi) - aY) > 3 * dp || e.getEventTime() - aT >= 45) { removeCallbacks(armTimeout); startStroke(); }
                         else return true;
                     }
                     if (!drawing) return true;
                     for (int i = 0; i < e.getHistorySize(); i++) {
-                        float hx = e.getHistoricalX(i), hy = e.getHistoricalY(i);
+                        float hx = e.getHistoricalX(pi, i), hy = e.getHistoricalY(pi, i);
                         long ht = e.getHistoricalEventTime(i);
-                        float pr = pressure(e, hx, hy, ht);
+                        float pr = pressureAt(e, pi, i, hx, hy, ht);
                         lastX = hx; lastY = hy; lastT = ht;
                         addPt(hx, hy, pr);
                     }
-                    float pr = pressure(e, e.getX(), e.getY(), e.getEventTime());
-                    lastX = e.getX(); lastY = e.getY(); lastT = e.getEventTime();
-                    addPt(e.getX(), e.getY(), pr);
+                    float pr = pressureAt(e, pi, -1, e.getX(pi), e.getY(pi), e.getEventTime());
+                    lastX = e.getX(pi); lastY = e.getY(pi); lastT = e.getEventTime();
+                    addPt(e.getX(pi), e.getY(pi), pr);
                     if (pend.size() > 600) flush(); else if (!pend.isEmpty()) postDelayed(flush, 40);
                     invalidate();
                     if (viewer != null) viewer.invalidate();
                     return true;
+                case MotionEvent.ACTION_POINTER_UP:
+                    // se levantó el dedo que dibuja y queda la mano apoyada: el trazo termina ahí
+                    if (ignored2 && e.getPointerId(e.getActionIndex()) == drawId && drawing) {
+                        drawing = false; finishTail(); flush(); doc.end();
+                        if (online()) dwSend(opj("end"));
+                        changed();
+                    }
+                    return true;
                 case MotionEvent.ACTION_UP: {
+                    ignored2 = false;
                     if (two) { two = false; return true; }
+                    if (e.getPointerId(0) != drawId && !drawing) return true;
                     float x = toX(e.getX()), y = toY(e.getY());
                     if (shaping) {
                         shaping = false;
@@ -3152,6 +3180,7 @@ public class DualDrawActivity extends Activity implements Link.Listener {
                     return true;
                 }
                 case MotionEvent.ACTION_CANCEL:
+                    ignored2 = false;
                     cancelStroke();
                     shaping = false;
                     lasso.clear();
