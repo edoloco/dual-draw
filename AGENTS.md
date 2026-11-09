@@ -15,7 +15,8 @@ ser una app aparte, con su propia conexión, igual que DUAL Motion.
 | **Extendido** (`edit`, abajo) | Poco M8 Pro | El lienzo con zoom, pinceles y herramientas (paneles de cristal), ☰ menú. |
 | **Un solo teléfono** (`solo`) | cualquiera | Arriba la obra (paneles flotantes escondidos), abajo el lienzo. |
 
-La primera vez se elige el papel (`chooseRole`); se cambia en ☰ › Cambiar el papel.
+La primera vez se elige el papel (`chooseRole`; mientras tanto `onResume`/`onPause` no tocan el dibujo, que aún no existe); se cambia en ☰ › Cambiar el papel.
+Si la app se cae, `catchCrashes` guarda `files/error.txt` y al abrirla de nuevo lo muestra con "Copiar".
 
 ## Reglas que no se rompen
 

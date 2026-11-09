@@ -177,6 +177,7 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         hub = Hub.get(this);
         dp = getResources().getDisplayMetrics().density;
         prefs = getSharedPreferences("dd", MODE_PRIVATE);
+        catchCrashes();
         mode = getIntent().getStringExtra("mode");
         if (mode == null) mode = prefs.getString("role", null);
         if (mode == null) { chooseRole(); return; }   // primera vez: qué papel tiene este teléfono
@@ -221,6 +222,43 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         // sin un dibujo en curso: primero se elige el tamaño
         if (fresh) h.postDelayed(this::askSize, 400);
         if (!editing()) h.postDelayed(() -> { if (!isFinishing()) Updater.checkQuiet(this); }, 2500);
+    }
+
+    // ======================= si algo se cae =======================
+
+    /** Si la app se cae, guarda el error; al abrirla otra vez lo muestra (para poder mandárselo a quien la arregla). */
+    private void catchCrashes() {
+        final Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
+        final File f = new File(getFilesDir(), "error.txt");
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+            try (java.io.PrintWriter w = new java.io.PrintWriter(new FileOutputStream(f))) {
+                w.println("DUAL Draw " + Updater.installed(this) + " · " + android.os.Build.MODEL + " · Android " + android.os.Build.VERSION.RELEASE);
+                e.printStackTrace(w);
+            } catch (Exception ignored) { }
+            if (prev != null) prev.uncaughtException(t, e);
+        });
+        if (!f.exists()) return;
+        String txt;
+        try (FileInputStream in = new FileInputStream(f)) {
+            byte[] b = new byte[(int) Math.min(f.length(), 6000)];
+            int n = in.read(b);
+            txt = new String(b, 0, Math.max(0, n), StandardCharsets.UTF_8);
+        } catch (Exception e) { txt = "(no se pudo leer)"; }
+        //noinspection ResultOfMethodCallIgnored
+        f.delete();
+        final String err = txt;
+        h.postDelayed(() -> {
+            if (isFinishing()) return;
+            new android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                    .setTitle("DUAL Draw se cerró la última vez")
+                    .setMessage("Copia esto y mándalo para arreglarlo:\n\n" + err)
+                    .setPositiveButton("Copiar", (d, w) -> {
+                        android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                        if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("error", err));
+                        Toast.makeText(this, "Copiado", Toast.LENGTH_SHORT).show();
+                    })
+                    .setNegativeButton("Cerrar", null).show();
+        }, 600);
     }
 
     // ======================= papel, menú y conexión =======================
@@ -385,6 +423,7 @@ public class DualDrawActivity extends Activity implements Link.Listener {
 
     @Override protected void onResume() {
         super.onResume();
+        if (mode == null || doc == null) return;   // eligiendo el papel: todavía no hay dibujo (antes se caía aquí)
         open = true;
         hub.add(this);
         if (online()) { hub.send("dwOpen"); if (editing()) { sendFull(); sendState(); } else hub.send("dwHello"); }
@@ -392,6 +431,7 @@ public class DualDrawActivity extends Activity implements Link.Listener {
     }
 
     @Override protected void onPause() {
+        if (mode == null || doc == null) { super.onPause(); return; }
         open = false;
         hub.remove(this);
         if (editing()) save();
