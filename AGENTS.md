@@ -13,8 +13,10 @@ ser una app aparte, con su propia conexión, igual que DUAL Motion.
 |---|---|---|
 | **Principal** (`view`, arriba) | Redmi Note 8 | Paneles **fijos** como DUAL Motion: color (izq., 214 dp), barra de archivo + la obra (centro), capas (der., 226 dp). |
 | **Extendido** (`edit`, abajo) | Poco M8 Pro | El lienzo con zoom, pinceles y herramientas (paneles de cristal), ☰ menú. |
-| **Un solo teléfono** (`solo`) | cualquiera | Arriba la obra (paneles flotantes escondidos), abajo el lienzo. |
+| **Un solo teléfono** (`solo`) | cualquiera, **siempre parado** (mitad y mitad, como DUAL Motion) | Arriba la barra de archivo (se desliza de lado) y la obra; "◫ Paneles" muestra uno a la vez: ninguno → Color → Capas (`soloPanel`). Abajo una tira de herramientas en dos filas (se desliza de lado) y el lienzo con tamaño, opacidad y deshacer a la derecha. |
 
+La orientación va con el papel (`setRequestedOrientation` en `onCreate`): un solo teléfono, parado; principal, extendido y
+la elección del papel, acostados (el manifiesto dice `sensorLandscape`).
 La primera vez se elige el papel (`chooseRole`; mientras tanto `onResume`/`onPause` no tocan el dibujo, que aún no existe); se cambia en ☰ › Cambiar el papel.
 Si la app se cae, `catchCrashes` guarda `files/error.txt` y al abrirla de nuevo lo muestra con "Copiar".
 

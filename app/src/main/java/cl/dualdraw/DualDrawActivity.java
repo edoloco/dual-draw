@@ -75,7 +75,7 @@ public class DualDrawActivity extends Activity implements Link.Listener {
     private final List<Tool> brushBtns = new ArrayList<>(), toolBtns = new ArrayList<>();
     private Tool symBtn, steadyBtn, flipBtn, shapeBtn, penBtn;
     private Glass2 toolPanel;
-    private android.widget.ScrollView toolScroll;
+    private FrameLayout toolScroll;     // grilla de herramientas (de lado en un solo teléfono)
     private int toolCell, toolCols;
     private int shapeVar = T_LINE;     // qué forma hace el botón de formas (línea, rectángulo u óvalo)
     boolean penOff;                    // pluma: "vector distanciado" (el punto aparece separado del dedo)
@@ -115,6 +115,8 @@ public class DualDrawActivity extends Activity implements Link.Listener {
     }
     private boolean editing() { return !"view".equals(mode); }
     private boolean linked() { return !"solo".equals(mode); }
+    /** Un solo teléfono: siempre parado, arriba la obra y abajo el lienzo. */
+    private boolean solo() { return "solo".equals(mode); }
     private boolean online() { return linked() && hub.connected(); }
 
     /** Ícono: las dos pantallas (una sobre la otra) y la punta de un lápiz asomando. Diseño propio. */
@@ -180,6 +182,9 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         catchCrashes();
         mode = getIntent().getStringExtra("mode");
         if (mode == null) mode = prefs.getString("role", null);
+        // la orientación va con el papel (como DUAL Motion): un solo teléfono, parado (mitad y mitad); lo demás, acostado
+        setRequestedOrientation(solo() ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         if (mode == null) { chooseRole(); return; }   // primera vez: qué papel tiene este teléfono
         if (linked()) LinkService.start(this, mode);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -209,8 +214,8 @@ public class DualDrawActivity extends Activity implements Link.Listener {
             LinearLayout col = new LinearLayout(this);
             col.setOrientation(LinearLayout.VERTICAL);
             col.setClipChildren(false);
-            col.addView(buildViewer(), new LinearLayout.LayoutParams(-1, 0, 1));
-            col.addView(buildEditor(), new LinearLayout.LayoutParams(-1, 0, 1));
+            col.addView(buildViewer(), new LinearLayout.LayoutParams(-1, 0, 0.46f));
+            col.addView(buildEditor(), new LinearLayout.LayoutParams(-1, 0, 0.54f));
             content = col;
             panelsOn = false;
             applyPanels();
@@ -468,11 +473,13 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         FrameLayout f = new FrameLayout(this);
         f.setClipChildren(false);
         viewer = new Board(false);
-        f.addView(viewer, new FrameLayout.LayoutParams(-1, -1));
+        FrameLayout.LayoutParams vlp = new FrameLayout.LayoutParams(-1, -1);
+        if (!fixed) vlp.topMargin = dp(BAR_H);   // la obra entera bajo la barra de archivo
+        f.addView(viewer, vlp);
         Board blurSrc = fixed ? null : viewer;   // fijos: no están sobre la obra, no la difuminan
 
-        // barra de arriba: título y archivo
-        Glass2 top = new Glass2(blurSrc, WHITE_PANEL);
+        // barra de arriba: título y archivo (en un solo teléfono se desliza de lado: no cabe a lo ancho)
+        Glass2 top = new Glass2(null, WHITE_PANEL);
         top.setOrientation(LinearLayout.HORIZONTAL);
         top.setGravity(Gravity.CENTER_VERTICAL);
         top.setPadding(dp(14), dp(4), dp(6), dp(4));
@@ -482,7 +489,7 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         sizeLabel = label("", 12);
         sizeLabel.setPadding(dp(8), 0, dp(4), 0);
         top.addView(sizeLabel);
-        if (!fixed) top.addView(pill("◫ Paneles", v -> { panelsOn = !panelsOn; applyPanels(); }));
+        if (!fixed) top.addView(pill("◫ Paneles", v -> { soloPanel = (soloPanel + 1) % 3; applyPanels(); }));
         top.addView(pill("☰", v -> appMenu()));
         top.addView(pill("Nuevo", v -> new Ui.Sheet(this).title("¿Empezar un dibujo nuevo?").message("Se borra el dibujo actual (guarda antes un PNG si lo quieres).")
                 .button("Cancelar", false, null).button("Nuevo", true, this::askSize).show()));
@@ -496,9 +503,14 @@ public class DualDrawActivity extends Activity implements Link.Listener {
                 }).show()));
         top.addView(pill("✕", v -> closeBoth()));
         if (!fixed) {
-            FrameLayout.LayoutParams tl = new FrameLayout.LayoutParams(-2, dp(46), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-            tl.topMargin = dp(8);
-            f.addView(top, tl);
+            android.widget.HorizontalScrollView bar = new android.widget.HorizontalScrollView(this);
+            bar.setHorizontalScrollBarEnabled(false);
+            bar.setClipToPadding(false);
+            bar.setPadding(dp(8), 0, dp(8), 0);
+            bar.addView(top, new FrameLayout.LayoutParams(-2, dp(46)));
+            FrameLayout.LayoutParams tl = new FrameLayout.LayoutParams(-1, dp(46), Gravity.TOP);
+            tl.topMargin = dp(6);
+            f.addView(bar, tl);
         }
 
         // izquierda: color
@@ -515,11 +527,12 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         leftPanel.addView(label("Recientes", 11));
         recentRow = new LinearLayout(this);
         leftPanel.addView(recentRow, new LinearLayout.LayoutParams(-1, dp(26)));
-        FrameLayout.LayoutParams ll = new FrameLayout.LayoutParams(dp(214), -2, Gravity.START | Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams ll = new FrameLayout.LayoutParams(dp(214), -2, Gravity.START | Gravity.TOP);
         ll.leftMargin = dp(10);
+        ll.topMargin = dp(BAR_H + 4);
         if (!fixed) f.addView(leftPanel, ll);
         // mantener presionado el panel (su borde o el título) y arrastrar: cambia ancho y alto; la rueda crece con él
-        if (!fixed) leftPanel.resizable("dwColorP", false, true, () -> {
+        if (!fixed) leftPanel.resizable("dwColorPv", false, false, () -> {
             // nada se deforma: la rueda queda proporcionada y los colores se reacomodan en más o menos columnas
             int ww = leftPanel.getLayoutParams().width > 0 ? leftPanel.getLayoutParams().width : leftPanel.getWidth();
             int inner = ww - leftPanel.getPaddingLeft() - leftPanel.getPaddingRight();
@@ -541,7 +554,9 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         android.widget.ScrollView layerScroll = new android.widget.ScrollView(this) {
             @Override protected void onMeasure(int ws, int hs) {
                 if (fixed) { super.onMeasure(ws, hs); return; }   // fijo: ocupa lo que queda del panel
-                int max = Math.max(dp(90), getResources().getDisplayMetrics().heightPixels - dp(300));
+                // la mitad de arriba: lo que queda bajo la barra, menos los controles del panel
+                int avail = f.getHeight() > 0 ? f.getHeight() : getResources().getDisplayMetrics().heightPixels / 2;
+                int max = Math.max(dp(90), avail - dp(BAR_H + 250));
                 super.onMeasure(ws, MeasureSpec.makeMeasureSpec(max, MeasureSpec.AT_MOST));
             }
         };
@@ -575,12 +590,13 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         }
         rightPanel.addView(grid);
         if (fixed) return fixedRow(top, f);
-        FrameLayout.LayoutParams rl = new FrameLayout.LayoutParams(dp(226), -2, Gravity.END | Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams rl = new FrameLayout.LayoutParams(dp(226), -2, Gravity.END | Gravity.TOP);
         rl.rightMargin = dp(10);
+        rl.topMargin = dp(BAR_H + 4);
         f.addView(rightPanel, rl);
         // capas: ancho y alto a gusto (la lista se desliza dentro)
         final android.widget.ScrollView ls = layerScroll;
-        rightPanel.resizable("dwLayersP", true, true, () -> {
+        rightPanel.resizable("dwLayersPv", true, false, () -> {
             if (rightPanel.getLayoutParams().height > 0 && ((LinearLayout.LayoutParams) ls.getLayoutParams()).weight == 0)
                 ls.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1));
         });
@@ -626,9 +642,15 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         return g;
     }
 
+    /** Alto de la barra de archivo en un solo teléfono (la obra y los paneles van debajo). */
+    private static final int BAR_H = 58;
+    /** Un solo teléfono (parado): no caben los dos paneles a lo ancho, así que "◫ Paneles" va: ninguno → Color → Capas. */
+    private int soloPanel;
+
     private void applyPanels() {
-        if (leftPanel != null) leftPanel.animate().alpha(panelsOn ? 1 : 0).translationX(panelsOn ? 0 : -(leftPanel.getWidth() + dp(30))).setDuration(260).start();
-        if (rightPanel != null) rightPanel.animate().alpha(panelsOn ? 1 : 0).translationX(panelsOn ? 0 : rightPanel.getWidth() + dp(30)).setDuration(260).start();
+        boolean lOn = solo() ? soloPanel == 1 : panelsOn, rOn = solo() ? soloPanel == 2 : panelsOn;
+        if (leftPanel != null) leftPanel.animate().alpha(lOn ? 1 : 0).translationX(lOn ? 0 : -(leftPanel.getWidth() + dp(30))).setDuration(260).start();
+        if (rightPanel != null) rightPanel.animate().alpha(rOn ? 1 : 0).translationX(rOn ? 0 : rightPanel.getWidth() + dp(30)).setDuration(260).start();
     }
 
     private static final int[] PALETTE = {0xFF000000, 0xFF424242, 0xFF9E9E9E, 0xFFFFFFFF, 0xFF6D4C41, 0xFFFFCCBC,
@@ -700,7 +722,18 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         // un gesto que empieza en el lienzo es del lienzo aunque el otro dedo caiga sobre un panel (zoom sin trazos)
         row.setMotionEventSplittingEnabled(false);
         row.setPadding(dp(10), dp(8), dp(10), dp(18));   // espacio para las sombras
-        boolean compact = "solo".equals(mode);
+        boolean compact = solo();
+        // un solo teléfono (parado): las herramientas van en una tira arriba y el lienzo usa todo el ancho
+        LinearLayout outer = null;
+        if (compact) {
+            outer = new LinearLayout(this);
+            outer.setOrientation(LinearLayout.VERTICAL);
+            outer.setClipChildren(false);
+            outer.setClipToPadding(false);
+            outer.setMotionEventSplittingEnabled(false);
+            outer.setPadding(dp(8), dp(4), dp(8), dp(14));
+            row.setPadding(0, dp(6), 0, 0);
+        }
         int cell = compact ? 32 : 38;
 
         // herramientas: grilla de 2 o 3 columnas que se desliza; se eligen con "Editar" y el panel cambia de tamaño
@@ -716,19 +749,35 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         TextView edit = label("✎", 15);
         edit.setPadding(dp(8), dp(2), dp(6), dp(2));
         edit.setOnClickListener(v -> editTools());
-        head.addView(edit);
-        left.addView(head);
-        toolScroll = new android.widget.ScrollView(this);
-        toolScroll.setVerticalScrollBarEnabled(false);
-        toolScroll.setFadingEdgeLength(dp(18));
-        toolScroll.setVerticalFadingEdgeEnabled(true);
-        left.addView(toolScroll, new LinearLayout.LayoutParams(-2, 0, 1));
-        fillTools();
-        left.resizable("dwToolsP", false, false, () -> { int c = toolColsFor(left.getWidth()); if (c != toolCols) { toolCols = c; fillTools(); } });
-        LinearLayout.LayoutParams leftLp = new LinearLayout.LayoutParams(-2, -1);
-        leftLp.gravity = Gravity.CENTER_VERTICAL;
-        row.addView(left, leftLp);
-        left.applySaved();
+        if (!compact) head.addView(edit);
+        if (compact) {
+            // tira: ✎ y las herramientas en dos filas que se deslizan de lado
+            left.setOrientation(LinearLayout.HORIZONTAL);
+            left.setGravity(Gravity.CENTER_VERTICAL);
+            left.addView(edit);
+            android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+            hs.setHorizontalScrollBarEnabled(false);
+            hs.setFadingEdgeLength(dp(18));
+            hs.setHorizontalFadingEdgeEnabled(true);
+            toolScroll = hs;
+            left.addView(toolScroll, new LinearLayout.LayoutParams(0, -2, 1));
+            fillTools();
+            outer.addView(left, new LinearLayout.LayoutParams(-1, -2));
+        } else {
+            left.addView(head);
+            android.widget.ScrollView vs = new android.widget.ScrollView(this);
+            vs.setVerticalScrollBarEnabled(false);
+            vs.setFadingEdgeLength(dp(18));
+            vs.setVerticalFadingEdgeEnabled(true);
+            toolScroll = vs;
+            left.addView(toolScroll, new LinearLayout.LayoutParams(-2, 0, 1));
+            fillTools();
+            left.resizable("dwToolsP", false, false, () -> { int c = toolColsFor(left.getWidth()); if (c != toolCols) { toolCols = c; fillTools(); } });
+            LinearLayout.LayoutParams leftLp = new LinearLayout.LayoutParams(-2, -1);
+            leftLp.gravity = Gravity.CENTER_VERTICAL;
+            row.addView(left, leftLp);
+            left.applySaved();
+        }
 
         // el lienzo, con la barra de "Valor de trazo" a un costado y la barra de selección arriba
         FrameLayout boardBox = new FrameLayout(this);
@@ -762,7 +811,7 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         selBar.addView(pill("+", v -> setTol(selTol + 8)));
         FrameLayout.LayoutParams sbl = new FrameLayout.LayoutParams(-2, dp(42), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         sbl.topMargin = dp(6);
-        boardBox.addView(selBar, sbl);
+        boardBox.addView(scrollBar(selBar), sbl);
         // transformar: un dedo mueve la capa, dos dedos la escalan y giran
         xfBar = new LinearLayout(this);
         xfBar.setGravity(Gravity.CENTER_VERTICAL);
@@ -777,7 +826,7 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         xfBar.addView(pill("✓ Aplicar", v -> commitXform()));
         xfBar.addView(pill("↺", v -> { if (xf != null) { xf.reset(); sendXf(true); editor.invalidate(); } }));
         xfBar.addView(pill("✕", v -> cancelXform()));
-        boardBox.addView(xfBar, new FrameLayout.LayoutParams(sbl));
+        boardBox.addView(scrollBar(xfBar), new FrameLayout.LayoutParams(sbl));
         // pluma (como FreeHand): toca = punto recto · mantén y arrastra = curva · toca el primer punto = cerrar
         penBar = floatBar();
         penHint = label("", 11);
@@ -855,7 +904,9 @@ public class DualDrawActivity extends Activity implements Link.Listener {
             right.addView(x, new LinearLayout.LayoutParams(ul));
         }
         row.addView(right, new LinearLayout.LayoutParams(-2, -1));
-        return row;
+        if (outer == null) return row;
+        outer.addView(row, new LinearLayout.LayoutParams(-1, 0, 1));
+        return outer;
     }
 
     // ---------------- panel de herramientas ----------------
@@ -903,7 +954,8 @@ public class DualDrawActivity extends Activity implements Link.Listener {
         String[][] shown = new String[arr.length][];   // la grilla recibe {símbolo, nombre}; el id queda aparte
         for (int i = 0; i < arr.length; i++) shown[i] = new String[]{arr[i][1], arr[i][2]};
         toolScroll.removeAllViews();
-        toolScroll.addView(grid(shown, toolCell, toolCols, (i, b) -> wireTool(arr[i][0], b)));
+        int cols = solo() ? Math.max(1, (shown.length + 1) / 2) : toolCols;   // en un solo teléfono: dos filas de lado
+        toolScroll.addView(grid(shown, toolCell, cols, (i, b) -> wireTool(arr[i][0], b)));
         refreshTools();
     }
 
@@ -1297,8 +1349,8 @@ public class DualDrawActivity extends Activity implements Link.Listener {
             }
         }
         if (valueBar != null) valueBar.setVisibility(brush == DrawDoc.VALUE && tool == T_DRAW ? View.VISIBLE : View.GONE);
-        if (selBar != null) selBar.setVisibility((tool == T_WAND || tool == T_LASSO || doc.hasSel) && tool != T_XFORM && tool != T_PEN && tool != T_FILL ? View.VISIBLE : View.GONE);
-        if (xfBar != null) xfBar.setVisibility(tool == T_XFORM ? View.VISIBLE : View.GONE);
+        show(selBar, (tool == T_WAND || tool == T_LASSO || doc.hasSel) && tool != T_XFORM && tool != T_PEN && tool != T_FILL);
+        show(xfBar, tool == T_XFORM);
         show(penBar, tool == T_PEN);
         if (offPanel != null) offPanel.setVisibility(tool == T_PEN && penOff ? View.VISIBLE : View.GONE);
         show(fillBar, tool == T_FILL);
@@ -1419,7 +1471,7 @@ public class DualDrawActivity extends Activity implements Link.Listener {
             if (editor != null && editor.getWidth() > 0) { editor.lastViewSent = 0; editor.fit(); }
             if (viewer != null && viewer.getWidth() > 0) { viewer.fit(); viewer.rebuildBlur(); }
         }
-        if (selBar != null) selBar.setVisibility((tool == T_WAND || tool == T_LASSO || doc.hasSel) && tool != T_XFORM && tool != T_PEN && tool != T_FILL ? View.VISIBLE : View.GONE);
+        show(selBar, (tool == T_WAND || tool == T_LASSO || doc.hasSel) && tool != T_XFORM && tool != T_PEN && tool != T_FILL);
         if (editor != null) editor.invalidate();
         if (viewer != null) viewer.invalidate();
         if (doc.stroking) return;   // mientras se dibuja solo se repinta; capas y cristal, al terminar el trazo
@@ -1868,7 +1920,7 @@ public class DualDrawActivity extends Activity implements Link.Listener {
             c.restore();
             Glass.body(c, r, rad, dp, over == null || over.blur == null ? null : () -> {
                 RectF dst = new RectF(over.dst);
-                dst.offset(-getLeft() - getTranslationX(), -getTop() - getTranslationY());
+                dst.offset(over.getLeft() - getLeft() - getTranslationX(), over.getTop() - getTop() - getTranslationY());
                 c.drawColor(BG);
                 c.drawBitmap(over.blur, null, dst, over.blurPaint);
             });
